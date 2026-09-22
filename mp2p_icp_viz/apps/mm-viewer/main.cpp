@@ -1971,16 +1971,6 @@ void onSaveLayers()
     }
 }
 
-#else  // MRPT_HAS_NANOGUI
-static void main_show_gui()
-{
-    THROW_EXCEPTION(
-        "This application requires a version of MRPT built with nanogui "
-        "support.");
-}
-
-#endif  // MRPT_HAS_NANOGUI
-
 int main(int argc, char** argv)
 {
     cmd.add_option("input", argMapFile, "Load this metric map file (*.mm)");
@@ -2061,3 +2051,23 @@ int main(int argc, char** argv)
         return 1;
     }
 }
+
+#else  // MRPT_HAS_NANOGUI
+
+// MRPT was built without nanogui, so everything above -- the viewer, its globals
+// (glVizMap/glGrid/glENUCorner/glMapCorner/glTrajectory/win), `trajectory`,
+// `extraVizLayers`, the ExtraVizLayer type and load_plugins() -- is compiled out.
+// main() uses all of them, so the previous #else (which only stubbed main_show_gui())
+// still left the file ill-formed: every one of those names came back as
+// "use of undeclared identifier" and mm-viewer could not build at all against a
+// nanogui-less MRPT. Provide a self-contained main() instead, which needs nothing from
+// the guarded section and reports the missing feature the same way the old stub did.
+int main(int, char**)
+{
+    std::cerr << APP_NAME
+              << ": this application requires a version of MRPT built with nanogui "
+                 "support (MRPT_HAS_NANOGUI).\n";
+    return 1;
+}
+
+#endif  // MRPT_HAS_NANOGUI
