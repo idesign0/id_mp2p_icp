@@ -199,17 +199,8 @@ void ICP::align(
 
         mrpt::system::CTimeLoggerEntry tle4(profiler_, "align.4.1_matchers");
 
-        // Re-decide the correspondences, unless they were frozen after the first
-        // few iterations (then the remaining ones refine the pose against a
-        // fixed pairing set).
-        const bool pairingsFrozen = p.freezePairingsAfterIteration > 0 &&
-                                    state.currentIteration >= p.freezePairingsAfterIteration &&
-                                    !state.currentPairings.empty();
-        if (!pairingsFrozen)
-        {
-            state.currentPairings = run_matchers(
-                matchers_, state.pcGlobal, state.pcLocal, state.currentSolution.optimalPose, mc);
-        }
+        state.currentPairings = run_matchers(
+            matchers_, state.pcGlobal, state.pcLocal, state.currentSolution.optimalPose, mc);
 
         tle4.stop();
 
@@ -426,10 +417,9 @@ void ICP::align(
     tle7.stop();
 
     // Store output:
-    result.optimal_tf.mean           = state.currentSolution.optimalPose;
-    result.gravity_information_share = state.currentSolution.gravity_information_share;
-    result.optimalScale              = state.currentSolution.optimalScale;
-    result.finalPairings             = std::move(state.currentPairings);
+    result.optimal_tf.mean = state.currentSolution.optimalPose;
+    result.optimalScale    = state.currentSolution.optimalScale;
+    result.finalPairings   = std::move(state.currentPairings);
 
     // Covariance of the estimated SE(3) registration:
     {
@@ -636,21 +626,21 @@ void ICP::initialize_solvers(const mrpt::containers::yaml& params, ICP::solver_l
     ASSERT_(params.isSequence());
     for (const auto& entry : params.asSequence())
     {
-        const mrpt::containers::yaml e(entry);
+        const auto& e = entry.asMap();
         // disabled?
-        if (e.has("enabled") && e["enabled"].as<bool>() == false)
+        if (e.count("enabled") && e.at("enabled").as<bool>() == false)
         {
             continue;
         }
 
         // optional plugin module?
-        if (e.has("plugin"))
+        if (const auto itPlugin = e.find("plugin"); itPlugin != e.end())
         {
-            const auto moduleToLoad = e["plugin"].as<std::string>();
+            const auto moduleToLoad = itPlugin->second.as<std::string>();
             mp2p_icp::load_plugin(moduleToLoad);
         }
 
-        const auto sClass = e["class"].as<std::string>();
+        const auto sClass = e.at("class").as<std::string>();
         auto       o      = mrpt::rtti::classFactory(sClass);
         ASSERT_(o);
 
@@ -658,7 +648,7 @@ void ICP::initialize_solvers(const mrpt::containers::yaml& params, ICP::solver_l
         ASSERTMSG_(
             m, mrpt::format("`%s` class seems not to be derived from Solver", sClass.c_str()));
 
-        m->initialize(e["params"]);
+        m->initialize(e.at("params"));
         lst.push_back(m);
     }
 }
@@ -675,21 +665,21 @@ void ICP::initialize_matchers(const mrpt::containers::yaml& params, matcher_list
     ASSERT_(params.isSequence());
     for (const auto& entry : params.asSequence())
     {
-        const mrpt::containers::yaml e(entry);
+        const auto& e = entry.asMap();
         // disabled?
-        if (e.has("enabled") && e["enabled"].as<bool>() == false)
+        if (e.count("enabled") && e.at("enabled").as<bool>() == false)
         {
             continue;
         }
 
         // optional plugin module?
-        if (e.has("plugin"))
+        if (const auto itPlugin = e.find("plugin"); itPlugin != e.end())
         {
-            const auto moduleToLoad = e["plugin"].as<std::string>();
+            const auto moduleToLoad = itPlugin->second.as<std::string>();
             mp2p_icp::load_plugin(moduleToLoad);
         }
 
-        const auto sClass = e["class"].as<std::string>();
+        const auto sClass = e.at("class").as<std::string>();
         auto       o      = mrpt::rtti::classFactory(sClass);
         ASSERTMSG_(
             o, mrpt::format("`%s` matcher class seems not to be registered", sClass.c_str()));
@@ -698,7 +688,7 @@ void ICP::initialize_matchers(const mrpt::containers::yaml& params, matcher_list
         ASSERTMSG_(
             m, mrpt::format("`%s` class seems not to be derived from Matcher", sClass.c_str()));
 
-        m->initialize(e["params"]);
+        m->initialize(e.at("params"));
         lst.push_back(m);
     }
 }
@@ -713,21 +703,21 @@ void ICP::initialize_quality_evaluators(
 
     for (const auto& entry : params.asSequence())
     {
-        const mrpt::containers::yaml e(entry);
+        const auto& e = entry.asMap();
         // disabled?
-        if (e.has("enabled") && e["enabled"].as<bool>() == false)
+        if (e.count("enabled") && e.at("enabled").as<bool>() == false)
         {
             continue;
         }
 
         // optional plugin module?
-        if (e.has("plugin"))
+        if (const auto itPlugin = e.find("plugin"); itPlugin != e.end())
         {
-            const auto moduleToLoad = e["plugin"].as<std::string>();
+            const auto moduleToLoad = itPlugin->second.as<std::string>();
             mp2p_icp::load_plugin(moduleToLoad);
         }
 
-        const auto sClass = e["class"].as<std::string>();
+        const auto sClass = e.at("class").as<std::string>();
         auto       o      = mrpt::rtti::classFactory(sClass);
         ASSERT_(o);
 
@@ -736,12 +726,12 @@ void ICP::initialize_quality_evaluators(
             m, mrpt::format(
                    "`%s` class seems not to be derived from QualityEvaluator", sClass.c_str()));
 
-        m->initialize(e["params"]);
+        m->initialize(e.at("params"));
 
         double weight = 1.0;
-        if (numEntries > 0 && e.has("weight"))
+        if (numEntries > 0 && e.count("weight") > 0)
         {
-            weight = e["weight"].as<double>();
+            weight = e.at("weight").as<double>();
         }
         lst.emplace_back(m, weight);
     }

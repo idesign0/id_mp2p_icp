@@ -21,15 +21,11 @@
 #include <mrpt/expr/CRuntimeCompiledExpression.h>
 
 #include <cstdint>
-#include <map>
 #include <optional>
 #include <set>
 #include <string>
 #include <variant>
 #include <vector>
-
-/// Defined if ParameterSource has hasVariable() and getVariableValue()
-#define MP2P_ICP_HAS_PARAMETER_SOURCE_HAS_VARIABLE 1
 
 namespace mp2p_icp
 {
@@ -80,25 +76,8 @@ class ParameterSource
 
     std::string printVariableValues() const;
 
-    /** Returns all current variable values */
-    auto getVariableValues() const -> const std::map<std::string, double>& { return variables_; }
-
-    /** Returns true if the variable has been defined via updateVariable() */
-    bool hasVariable(const std::string& variable) const
-    {
-        return variables_.find(variable) != variables_.end();
-    }
-
-    /** Returns the variable value, or std::nullopt if it is not defined */
-    auto getVariableValue(const std::string& variable) const -> std::optional<double>
-    {
-        const auto it = variables_.find(variable);
-        if (it == variables_.end())
-        {
-            return std::nullopt;
-        }
-        return it->second;
-    }
+    /** Returns a copy of the current variable values */
+    auto getVariableValues() const -> std::map<std::string, double> { return variables_; }
 
     /** Local velocity buffer for this parameter source */
 #if defined(MP2P_ICP_HAS_MOLA_IMU_PREINTEGRATION)

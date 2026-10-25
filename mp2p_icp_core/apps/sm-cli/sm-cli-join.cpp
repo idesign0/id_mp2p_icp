@@ -46,8 +46,7 @@ int commandJoin()
     std::cout << "Writing merged simplemap with " << outSM.size() << " keyframes to '" << outFil
               << "'" << std::endl;
 
-    const bool saveOk = outSM.saveToFile(outFil);
-    ASSERTMSG_(saveOk, "Error writing output file");
+    outSM.saveToFile(outFil);
 
     return 0;
 }

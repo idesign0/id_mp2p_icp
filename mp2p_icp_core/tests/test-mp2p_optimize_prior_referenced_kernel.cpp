@@ -64,7 +64,7 @@ mrpt::poses::CPose3D runSolver(
     mrpt::containers::yaml solverParams;
     solverParams["maxIterations"]             = 50;
     solverParams["robustKernel"]              = "RobustKernel::Cauchy";
-    solverParams["robustKernelScale"]         = 0.5;
+    solverParams["robustKernelParam"]         = 0.5;
     solverParams["robustKernelPriorRefBlend"] = blend;
     solver.initialize(solverParams);
 

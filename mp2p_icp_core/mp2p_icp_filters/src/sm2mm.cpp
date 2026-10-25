@@ -24,7 +24,6 @@
 #include <mp2p_icp_filters/sm2mm.h>
 #include <mrpt/core/Clock.h>
 #include <mrpt/obs/CObservationComment.h>
-#include <mrpt/obs/CObservationIMU.h>
 #include <mrpt/system/progress.h>
 
 #if defined(MP2P_ICP_HAS_MOLA_IMU_PREINTEGRATION)
@@ -269,15 +268,11 @@ void mp2p_icp_filters::simplemap_to_metricmap(
         ps.realize();
 
         // First, search for velocity buffer data:
-        bool kfHasVelocityBuffer = false;
         for (const auto& obs : *sf)
         {
             ASSERT_(obs);
 #if defined(MP2P_ICP_HAS_MOLA_IMU_PREINTEGRATION)
-            if (mp2p_icp::update_velocity_buffer_from_obs(ps.localVelocityBuffer, obs))
-            {
-                kfHasVelocityBuffer = true;
-            }
+            mp2p_icp::update_velocity_buffer_from_obs(ps.localVelocityBuffer, obs);
 #endif
         }
 
@@ -287,25 +282,12 @@ void mp2p_icp_filters::simplemap_to_metricmap(
             for (const auto& obs : *sf)
             {
                 ASSERT_(obs);
-
-                // The velocity buffer stored by the odometry already holds every IMU sample
-                // of this sweep, from the IMU it de-skewed with. Keyframe IMU readings must
-                // not be added to it: they may come from another IMU (e.g. an attitude-only
-                // one), and whether they reached the de-skew depended on their order in the
-                // keyframe.
-                if (kfHasVelocityBuffer && IS_CLASS(*obs, mrpt::obs::CObservationIMU))
-                {
-                    continue;
-                }
-
                 obs->load();
 
                 bool handled = mp2p_icp_filters::apply_generators(
                     generators, *obs, mm, effectiveRobotPose, options.profiler);
 
-                // IMU readings are consumed by the generators only to feed the velocity buffer:
-                // they add no map content, so the per-frame filters must not run for them.
-                if (!handled || IS_CLASS(*obs, mrpt::obs::CObservationIMU))
+                if (!handled)
                 {
                     obs->unload();
                     continue;

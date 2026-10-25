@@ -25,8 +25,6 @@
 #include <mrpt/math/CHistogram.h>  // CHistogram
 #include <mrpt/math/distributions.h>  // confidenceIntervalsFromHistogram()
 
-#include <limits>
-
 IMPLEMENTS_MRPT_OBJECT(Matcher_Adaptive, Matcher, mp2p_icp)
 
 using namespace mp2p_icp;
@@ -201,28 +199,9 @@ void Matcher_Adaptive::implMatchOneLayer(
 
     }  // For each local point
 
-    // No local point found any neighbor within absoluteMaxSearchDistance
-    // (possible even after the bounding-box overlap check above, e.g. two
-    // clouds whose boxes barely touch): nothing to pair this round.
-    if (!minSqrErrorForHistogram || !maxSqrErrorForHistogram)
-    {
-        return;
-    }
-
     // Now, estimate the probability distribution (histogram) of the
     // 1st/2nd points:
-    double histMin = *minSqrErrorForHistogram;
-    double histMax = *maxSqrErrorForHistogram;
-    if (histMax <= histMin)
-    {
-        // A single distinct distance value (e.g. just one local point, or
-        // several tied at the same distance): CHistogram requires max>min.
-        // A fixed epsilon would vanish under rounding for a large enough
-        // histMin (e.g. a large absoluteMaxSearchDistance), so step to the
-        // next representable double instead:
-        histMax = std::nextafter(histMin, std::numeric_limits<double>::infinity());
-    }
-    mrpt::math::CHistogram hist(histMin, histMax, 50);
+    mrpt::math::CHistogram hist(*minSqrErrorForHistogram, *maxSqrErrorForHistogram, 50);
 
     for (const auto& mspl : matchesPerLocal_)
         for (size_t i = 0; i < std::min<size_t>(mspl.size(), 2UL); i++)

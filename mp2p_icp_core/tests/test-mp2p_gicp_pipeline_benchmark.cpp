@@ -266,7 +266,7 @@ solvers:
     params:
       maxIterations: 1
       robustKernel: "RobustKernel::GemanMcClure"
-      robustKernelScale: 2.4494897
+      robustKernelParam: 6.0
 matchers:
   - class: mp2p_icp::Matcher_Cov2Cov
     params:

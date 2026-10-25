@@ -23,7 +23,6 @@
 #include <mrpt/core/pimpl.h>
 #include <mrpt/maps/CPointsMap.h>
 
-#include <cmath>
 #include <vector>
 
 /** \ingroup mp2p_icp_filters_grp */
@@ -129,11 +128,8 @@ class PointCloudToVoxelGrid
             static_assert(offsetof(indices_t, cy_) == 1 * sizeof(uint32_t));
             static_assert(offsetof(indices_t, cz_) == 2 * sizeof(uint32_t));
 
-            // Keep all 32 bits: masking to fewer bits bounds the number of
-            // distinct buckets, which makes open-addressing maps grow without
-            // limit once they hold that many keys.
             const uint32_t* vec = reinterpret_cast<const uint32_t*>(&k);
-            return vec[0] * 73856093 ^ vec[1] * 19349663 ^ vec[2] * 83492791;
+            return ((1 << 20) - 1) & (vec[0] * 73856093 ^ vec[1] * 19349663 ^ vec[2] * 83492791);
         }
 
         // k1 < k2?
@@ -151,13 +147,7 @@ class PointCloudToVoxelGrid
         }
     };
 
-    /** Voxel index along one axis: voxel `i` spans `[i*resolution, (i+1)*resolution)`.
-     *  Rounds down (`floor`), not toward zero, so that voxels straddling an
-     *  axis plane are not merged into one of double width. */
-    inline int32_t coord2idx(float xyz) const
-    {
-        return static_cast<int32_t>(std::floor(xyz / resolution_));
-    }
+    inline int32_t coord2idx(float xyz) const { return static_cast<int32_t>(xyz / resolution_); }
 
     void visit_voxels(
         const std::function<void(const indices_t idx, const voxel_t& vxl)>& userCode) const;

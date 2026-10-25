@@ -1,6 +1,6 @@
 project(txt2mm)
 
-find_package(mrpt_maps REQUIRED)
+find_package(mrpt-maps REQUIRED)
 find_package(CLI11 REQUIRED)
 
 mola_add_executable(
@@ -9,7 +9,7 @@ mola_add_executable(
     main.cpp
   LINK_LIBRARIES
     mp2p_icp_map
-    mrpt::mrpt_maps
+    mrpt::maps
     CLI11::CLI11
 )
 

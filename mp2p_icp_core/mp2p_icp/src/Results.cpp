@@ -19,8 +19,7 @@
 
 using namespace mp2p_icp;
 
-// v1: added gravity_information_share
-static const uint8_t SERIALIZATION_VERSION = 1;
+static const uint8_t SERIALIZATION_VERSION = 0;
 
 void Results::serializeTo(mrpt::serialization::CArchive& out) const
 {
@@ -29,26 +28,17 @@ void Results::serializeTo(mrpt::serialization::CArchive& out) const
     out << static_cast<uint8_t>(terminationReason);
     out << quality;
     finalPairings.serializeTo(out);
-    out << gravity_information_share;  // v1
 }
 void Results::serializeFrom(mrpt::serialization::CArchive& in)
 {
     const auto readVersion = in.ReadAs<uint8_t>();
 
-    ASSERT_LE_(readVersion, SERIALIZATION_VERSION);
+    ASSERT_EQUAL_(readVersion, SERIALIZATION_VERSION);
 
     in >> optimal_tf >> optimalScale >> nIterations;
     terminationReason = static_cast<IterTermReason>(in.ReadAs<uint8_t>());
     in >> quality;
     finalPairings.serializeFrom(in);
-
-    // A log written before this field existed says nothing about the prior,
-    // which is exactly what the negative sentinel means.
-    gravity_information_share = -1.0;
-    if (readVersion >= 1)
-    {
-        in >> gravity_information_share;
-    }
 }
 
 mrpt::serialization::CArchive& mp2p_icp::operator<<(

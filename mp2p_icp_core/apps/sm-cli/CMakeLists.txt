@@ -1,7 +1,7 @@
 project(sm-cli)
 
-find_package(mrpt_maps REQUIRED)
-find_package(mrpt_obs REQUIRED)
+find_package(mrpt-maps REQUIRED)
+find_package(mrpt-obs REQUIRED)
 find_package(CLI11 REQUIRED)
 
 mola_add_executable(
@@ -15,13 +15,12 @@ mola_add_executable(
     sm-cli-info.cpp
     sm-cli-join.cpp
     sm-cli-level.cpp
-    sm-cli-level-walls.cpp
     sm-cli-tf.cpp
     sm-cli-trim.cpp
   LINK_LIBRARIES
     mp2p_icp_filters
-    mrpt::mrpt_maps
-    mrpt::mrpt_obs
+    mrpt::maps
+    mrpt::obs
     CLI11::CLI11
 )
 

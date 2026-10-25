@@ -146,26 +146,26 @@ struct Pairings
     virtual auto get_visualization(
         const mrpt::poses::CPose3D&     localWrtGlobal,
         const pairings_render_params_t& p = pairings_render_params_t()) const
-        -> std::shared_ptr<mrpt::viz::CSetOfObjects>;
+        -> std::shared_ptr<mrpt::opengl::CSetOfObjects>;
 
     /** Used inside get_visualization(), renders pt-to-pt pairings only. */
     virtual void get_visualization_pt2pt(
-        mrpt::viz::CSetOfObjects& o, const mrpt::poses::CPose3D& localWrtGlobal,
+        mrpt::opengl::CSetOfObjects& o, const mrpt::poses::CPose3D& localWrtGlobal,
         const render_params_pairings_pt2pt_t& p) const;
 
     /** Used inside get_visualization(), renders pt-to-pl pairings only. */
     virtual void get_visualization_pt2pl(
-        mrpt::viz::CSetOfObjects& o, const mrpt::poses::CPose3D& localWrtGlobal,
+        mrpt::opengl::CSetOfObjects& o, const mrpt::poses::CPose3D& localWrtGlobal,
         const render_params_pairings_pt2pl_t& p) const;
 
     /** Used inside get_visualization(), renders cov-to-cov pairings only. */
     virtual void get_visualization_cov2cov(
-        mrpt::viz::CSetOfObjects& o, const mrpt::poses::CPose3D& localWrtGlobal,
+        mrpt::opengl::CSetOfObjects& o, const mrpt::poses::CPose3D& localWrtGlobal,
         const render_params_pairings_cov2cov_t& p) const;
 
     /** Used inside get_visualization(), renders pt-to-ln pairings only. */
     virtual void get_visualization_pt2ln(
-        mrpt::viz::CSetOfObjects& o, const mrpt::poses::CPose3D& localWrtGlobal,
+        mrpt::opengl::CSetOfObjects& o, const mrpt::poses::CPose3D& localWrtGlobal,
         const render_params_pairings_pt2ln_t& p) const;
 
     /** @} */

@@ -24,7 +24,6 @@
 #include <mp2p_icp_filters/DecimateMethod.h>
 #include <mp2p_icp_filters/FilterBase.h>
 #include <mp2p_icp_filters/PointCloudToVoxelGrid.h>
-#include <mp2p_icp_filters/PointCloudToVoxelGridAverage.h>
 #include <mp2p_icp_filters/PointCloudToVoxelGridSingle.h>
 #include <mrpt/maps/CPointsMap.h>
 
@@ -44,10 +43,7 @@ namespace mp2p_icp_filters
  * "summarize" the 3D points into a 2D planar (constant height `z`) cloud.
  *
  * Additional input point fields (ring, intensity, timestamp) will be copied
- * into the output target cloud. When the output point is synthesized (the
- * average for DecimateMethod::VoxelAverage, or a flattened point), they are
- * taken from the input point it stands for (for VoxelAverage, the one
- * closest to the average).
+ * into the output target cloud, except when using the `flatten_to` option.
  *
  * If `minimum_input_points_to_filter` is defined, input clouds smaller than
  * that size will not be decimated at all.
@@ -88,8 +84,7 @@ class FilterDecimateVoxels : public mp2p_icp_filters::FilterBase
 
         /** Whether to use as container implementation
          * tsl::robin_map (true, default), or a std::map (false).
-         * tsl::robin_map is faster at any cloud size; std::map needs somewhat
-         * less peak memory.
+         * For large clouds (>10^6), std::map seems to be faster.
          */
         bool use_tsl_robin_map = true;
 
@@ -119,19 +114,10 @@ class FilterDecimateVoxels : public mp2p_icp_filters::FilterBase
     void initialize_filter(const mrpt::containers::yaml& c) override;
 
    private:
-    mutable std::optional<PointCloudToVoxelGrid>        filter_grid_;
-    mutable std::optional<PointCloudToVoxelGridSingle>  filter_grid_single_;
-    mutable std::optional<PointCloudToVoxelGridAverage> filter_grid_average_;
+    mutable std::optional<PointCloudToVoxelGrid>       filter_grid_;
+    mutable std::optional<PointCloudToVoxelGridSingle> filter_grid_single_;
 
-    /** FirstPoint needs nothing but one point per voxel. */
     bool useSingleGrid() const { return params.decimate_method == DecimateMethod::FirstPoint; }
-
-    /** These two only need a summary of each voxel, not its point list. */
-    bool useAverageGrid() const
-    {
-        return params.decimate_method == DecimateMethod::ClosestToAverage ||
-               params.decimate_method == DecimateMethod::VoxelAverage;
-    }
 };
 
 /** @} */

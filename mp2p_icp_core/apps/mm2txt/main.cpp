@@ -46,7 +46,6 @@ std::string              argMapFile;
 std::vector<std::string> argLayers;
 std::string              argExportFields;
 bool                     argIgnoreMissingFields = false;
-bool                     argNoHeader            = false;
 std::string              argFrame               = "map";
 std::string              arg_plugins;
 
@@ -395,7 +394,7 @@ void run_mm2txt()
                 validFields = selectedFields;
             }
 
-            const bool printHeader = !argNoHeader;
+            bool printHeader = true;
             saveToTxt(*genxyz, filName, printHeader, validFields, T_enu_to_map);
         }
 #if MRPT_VERSION < 0x030000  // <3.0.0
@@ -417,10 +416,7 @@ void run_mm2txt()
             else
             {
                 printSelectedFieldsWarning();
-                if (!pts->save3D_to_text_file(filName))
-                {
-                    THROW_EXCEPTION_FMT("Error saving to text file '%s'", filName.c_str());
-                }
+                pts->save3D_to_text_file(filName);
             }
 #pragma GCC diagnostic pop
         }
@@ -428,10 +424,7 @@ void run_mm2txt()
         else
         {
             printSelectedFieldsWarning();
-            if (!pts->save3D_to_text_file(filName))
-            {
-                THROW_EXCEPTION_FMT("Error saving to text file '%s'", filName.c_str());
-            }
+            pts->save3D_to_text_file(filName);
         }
 #endif
     }
@@ -454,10 +447,6 @@ int main(int argc, char** argv)
         "If defined, the lack of any of the --export-fields in the map will be considered a "
         "warning "
         "instead of an error; missing fields are skipped.");
-    cmd.add_flag(
-        "--no-header", argNoHeader,
-        "Do not write the first line with the field names, so the output is a plain numeric "
-        "matrix (e.g. for numpy.loadtxt()).");
     cmd.add_option(
         "--frame", argFrame,
         "Coordinate frame for exported points: 'map' (default) uses the map local frame; "

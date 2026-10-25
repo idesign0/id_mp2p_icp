@@ -16,13 +16,6 @@ endif()
 
 project(mp2p_icp_viz LANGUAGES CXX)
 
-# This package builds as a plain "cmake" build_type under colcon (not
-# ament_cmake or catkin), but colcon still passes these catkin-only
-# variables when invoked with --symlink-install. Consume them here to
-# silence the "Manually-specified variables were not used" CMake warning.
-set(_mp2p_icp_ignored_vars "${CATKIN_INSTALL_INTO_PREFIX_ROOT}" "${CATKIN_SYMLINK_INSTALL}")
-unset(_mp2p_icp_ignored_vars)
-
 find_package(mola_common REQUIRED)
 
 # The mp2p_icp (ICP algorithms) library, built by the sibling mp2p_icp_core
@@ -30,13 +23,6 @@ find_package(mola_common REQUIRED)
 find_package(mp2p_icp REQUIRED)
 
 find_package(Threads REQUIRED)
-
-# -- Dear ImGui, from the MRPT vendor package --------------------------------
-#
-# mrpt_imgui_vendor ships a single vendored copy of Dear ImGui (docking branch)
-# plus ImPlot and portable-file-dialogs, and exports it as a static target
-# aliased to the upstream-style name imgui::imgui. Shared by both apps.
-find_package(mrpt_imgui_vendor REQUIRED)
 
 #----
 # Extract version from package.xml

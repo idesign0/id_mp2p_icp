@@ -1,8 +1,7 @@
 project(icp-log-viewer)
 
 find_package(CLI11 REQUIRED)
-find_package(mrpt_gui REQUIRED)
-find_package(mrpt_imgui REQUIRED)  # CImGuiSceneView
+find_package(mrpt-gui REQUIRED)
 
 mola_add_executable(
   TARGET ${PROJECT_NAME}
@@ -11,8 +10,6 @@ mola_add_executable(
   LINK_LIBRARIES
     mola::mp2p_icp
     CLI11::CLI11
-    mrpt::mrpt_gui
-    mrpt::mrpt_imgui
+    mrpt::gui
     Threads::Threads
-    imgui_app_common
   )

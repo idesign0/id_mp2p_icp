@@ -11,8 +11,7 @@ Available commands:
     sm-cli export-rawlog      Export KFs as rawlog for inspection.
     sm-cli info               Analyze a .simplemap file.
     sm-cli join               Join two or more .simplemap files into one.
-    sm-cli level              Levels a .simplemap from its keyframe heights.
-    sm-cli level-walls        Levels a .simplemap from its wall/floor normals.
+    sm-cli level              Makes a .simplemap file level (horizontal).
     sm-cli tf                 Applies a SE(3) transform by the left to a map.
     sm-cli trim               Extracts part of a .simplemap inside a given box.
     sm-cli --version          Shows program version.

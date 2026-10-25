@@ -23,9 +23,7 @@
 #include <mrpt/core/pimpl.h>
 #include <mrpt/maps/CPointsMap.h>
 
-#include <cmath>
-#include <cstdint>
-#include <vector>
+#include <optional>
 
 /** \ingroup mp2p_icp_filters_grp */
 namespace mp2p_icp_filters
@@ -51,28 +49,15 @@ class PointCloudToVoxelGridSingle
      */
     void clear();
 
-    /** The single point kept for a voxel.
-     *
-     *  The fields are stored bare, rather than wrapped in std::optional, since
-     *  this struct is the value type of the hash map and is therefore touched
-     *  once per input point: the optionals made it 56 bytes, which is what the
-     *  per-point cost of this grid is dominated by. `pointCount == 0` marks an
-     *  empty voxel, so no separate "has value" flag is needed.
-     */
+    /** The list of point indices in each voxel */
     struct voxel_t
     {
-        mrpt::math::TPoint3Df point = {0, 0, 0};
+        std::optional<mrpt::math::TPoint3Df>         point;
+        std::optional<size_t>                        pointIdx;  // Index in the source
+        std::optional<const mrpt::maps::CPointsMap*> source;
 
-        /** Index of `point` within the source cloud. */
-        uint32_t pointIdx = 0;
-
-        /** Even if we keep the first point only, count them all.
-         *  Zero means the voxel holds no point yet. */
+        /** Even if we keep the first point only, count them all. */
         uint32_t pointCount = 0;
-
-        /** Which of the clouds passed to processPointCloud() `pointIdx`
-         *  refers to; resolve it with sourceCloud(). */
-        uint16_t sourceIdx = 0;
     };
 
     struct indices_t
@@ -105,11 +90,8 @@ class PointCloudToVoxelGridSingle
             static_assert(offsetof(indices_t, cy_) == 1 * sizeof(uint32_t));
             static_assert(offsetof(indices_t, cz_) == 2 * sizeof(uint32_t));
 
-            // Keep all 32 bits: masking to fewer bits bounds the number of
-            // distinct buckets, which makes open-addressing maps grow without
-            // limit once they hold that many keys.
             const uint32_t* vec = reinterpret_cast<const uint32_t*>(&k);
-            return vec[0] * 73856093 ^ vec[1] * 19349663 ^ vec[2] * 83492791;
+            return ((1 << 20) - 1) & (vec[0] * 73856093 ^ vec[1] * 19349663 ^ vec[2] * 83492791);
         }
 
         // k1 < k2?
@@ -127,13 +109,7 @@ class PointCloudToVoxelGridSingle
         }
     };
 
-    /** Voxel index along one axis: voxel `i` spans `[i*resolution, (i+1)*resolution)`.
-     *  Rounds down (`floor`), not toward zero, so that voxels straddling an
-     *  axis plane are not merged into one of double width. */
-    inline int32_t coord2idx(float xyz) const
-    {
-        return static_cast<int32_t>(std::floor(xyz / resolution_));
-    }
+    inline int32_t coord2idx(float xyz) const { return static_cast<int32_t>(xyz / resolution_); }
 
     void visit_voxels(
         const std::function<void(const indices_t idx, const voxel_t& vxl)>& userCode) const;
@@ -141,19 +117,11 @@ class PointCloudToVoxelGridSingle
     /// Returns the number of occupied voxels.
     size_t size() const;
 
-    /** Resolves voxel_t::sourceIdx into the cloud it refers to. */
-    const mrpt::maps::CPointsMap* sourceCloud(uint16_t sourceIdx) const;
-
    private:
     /** Voxel size (meters) or resolution. */
     float resolution_ = 0.20f;
 
     bool use_tsl_robin_map_ = true;
-
-    /** The clouds seen by processPointCloud() since the last clear(), in call
-     *  order. Voxels store an index into this list instead of a pointer, which
-     *  keeps voxel_t small. */
-    std::vector<const mrpt::maps::CPointsMap*> sources_;
 
     /** The actual hash map. Hidden inside a PIMP to prevent problems with
      * duplicated TSL library copies in the user space */

@@ -67,12 +67,11 @@ void unit_test()
     {
         for (const auto& p : seq)
         {
-            const mrpt::containers::yaml pp(p);
-            auto&                        lc = LCs.emplace_back();
-            lc.is_good_lc                   = are_good_lcs;
-            lc.global                       = pp["global"].as<std::string>();
-            lc.local                        = pp["local"].as<std::string>();
-            const auto v                    = pp["final_pose"].asSequenceRange();
+            auto& lc      = LCs.emplace_back();
+            lc.is_good_lc = are_good_lcs;
+            lc.global     = p.asMap().at("global").as<std::string>();
+            lc.local      = p.asMap().at("local").as<std::string>();
+            const auto v  = p.asMap().at("final_pose").asSequence();
             ASSERT_EQUAL_(v.size(), 6UL);
             lc.local_pose_wrt_global = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
                 v[0].as<double>(), v[1].as<double>(), v[2].as<double>(),

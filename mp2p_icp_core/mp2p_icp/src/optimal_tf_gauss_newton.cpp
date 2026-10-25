@@ -25,13 +25,7 @@
 #include <mrpt/poses/Lie/SE.h>
 
 #include <Eigen/Dense>
-#include <atomic>
-#include <cstdint>
-#include <cstdlib>
-#include <fstream>
 #include <iostream>
-#include <limits>
-#include <memory>
 
 #if defined(MP2P_HAS_TBB)
 #include <tbb/blocked_range.h>
@@ -42,166 +36,6 @@ using namespace mp2p_icp;
 
 namespace
 {
-#if defined(MP2P_HAS_TBB)
-/** Chunk length of the parallel accumulation of H, g and the cost.
- *
- *  Floating-point addition is not associative, so the summation order decides
- *  the last bits of the normal equations, and a Gauss-Newton iteration then
- *  carries that difference forward. Plain tbb::parallel_reduce shapes its
- *  reduction tree from whichever workers happen to be free, which makes the
- *  solution depend on the thread count, and at a fixed thread count on the
- *  scheduling of the individual run. tbb::parallel_deterministic_reduce splits
- *  a given range the same way every time, but only if it is told where to stop
- *  splitting: hence this explicit grain size, which makes the partition a
- *  function of the number of pairings alone.
- *
- *  The value trades task overhead against how small a problem can still keep
- *  every core busy, and it is not a guess: it was measured against the plain
- *  parallel_reduce it replaces, sweeping the pairing count from 200 to 20000
- *  on 4 and on 12 workers, for all three blocks. A grain of 32 comes out a few
- *  percent FASTER up to a few thousand pairings, which is where LiDAR odometry
- *  runs, and 2-3% slower at 20000, where the extra tasks stop paying for
- *  themselves. Both directions were reproducible across interleaved runs.
- *  Coarser grains (128, 256) were far worse on small problems, up to 4x on 12
- *  workers, because a 500-pairing range then splits into too few chunks to
- *  fill the pool. Re-measure before changing it: this is a hot path.
- */
-constexpr size_t DETERMINISTIC_GRAIN_SIZE = 32;
-
-/** Sums `body` over the chunks of [0,n) in an order that depends only on `n`.
- *  `Result` must be default-constructible to the identity and define operator+.
- */
-template <typename Result, typename Body>
-Result deterministic_reduce(size_t n, const Body& body)
-{
-    return tbb::parallel_deterministic_reduce(
-        tbb::blocked_range<size_t>{0, n, DETERMINISTIC_GRAIN_SIZE}, Result(), body,
-        [](const Result& a, const Result& b) -> Result { return a + b; });
-}
-#endif
-
-/** Optional diagnostic: append the eigenvalue spectrum of the normal-equations
- *  matrix H to a TSV file, one row per inner Gauss-Newton iteration.
- *
- *  Enabled only if the environment variable MP2P_ICP_H_SPECTRUM_FILE is set to
- *  a writable path, so it costs one cached lookup when unused. Meant for
- *  sensitivity studies: the increment is H^-1 g, so how far a perturbed
- *  residual can move the solution is bounded by the conditioning of H, and
- *  that is not observable from the trajectory alone.
- *
- *  Not thread-safe by design: it is for single-threaded diagnostic runs.
- */
-std::atomic<uint64_t> hSpectrumCallCounter{0};
-
-std::ostream* hSpectrumStream()
-{
-    static std::unique_ptr<std::ofstream> s_file = []() -> std::unique_ptr<std::ofstream>
-    {
-        const char* path = ::getenv("MP2P_ICP_H_SPECTRUM_FILE");
-        if (!path || !path[0])
-        {
-            return {};
-        }
-        auto f = std::make_unique<std::ofstream>(path, std::ios::out | std::ios::app);
-        if (!f->is_open())
-        {
-            return {};
-        }
-        *f << "# call\titer\tnPairs\terrNorm\tev0\tev1\tev2\tev3\tev4\tev5\tcond"
-              "\tmeas_ev0\tmeas_ev1\tmeas_ev2\tmeas_ev3\tmeas_ev4\tmeas_ev5"
-              "\tmeas_cond\ttrace_meas_over_reg\tdeltaNorm\n";
-        if (!f->good())
-        {
-            return {};
-        }
-        return f;
-    }();
-    // A write that failed silently would leave a truncated log looking like a
-    // complete one, so stop handing out a stream that has already gone bad.
-    if (s_file && !s_file->good())
-    {
-        s_file.reset();
-    }
-    return s_file ? s_file.get() : nullptr;
-}
-
-void dumpHSpectrum(
-    std::ostream& o, uint64_t call, size_t iter, size_t nPairs, double errNorm,
-    const Eigen::Matrix<double, 6, 6>& H, const Eigen::Matrix<double, 6, 6>& H_meas,
-    double deltaNorm)
-{
-    // Eigenvalues come out sorted ascending, so the ratio of the extremes is the
-    // 2-norm condition number of these symmetric positive-semidefinite matrices.
-    const Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, 6, 6>> es(H, Eigen::EigenvaluesOnly);
-    const auto                                                       ev = es.eigenvalues();
-    const Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, 6, 6>> esM(
-        H_meas, Eigen::EigenvaluesOnly);
-    const auto evM = esM.eigenvalues();
-
-    const double cond  = ev[0] > 0 ? ev[5] / ev[0] : std::numeric_limits<double>::infinity();
-    const double condM = evM[0] > 0 ? evM[5] / evM[0] : std::numeric_limits<double>::infinity();
-    // How hard everything added AFTER the measurement block pulls back, in the
-    // one unit that is comparable across frameworks: the share of the total
-    // information it contributes. That is the pose prior plus the rank-2
-    // gravity term, not the pose prior alone, hence the column name.
-    const double traceReg = H.trace() - H_meas.trace();
-    const double traceRatio =
-        traceReg > 0 ? H_meas.trace() / traceReg : std::numeric_limits<double>::infinity();
-
-    o << call << '\t' << iter << '\t' << nPairs << '\t' << errNorm;
-    for (int i = 0; i < 6; i++)
-    {
-        o << '\t' << ev[i];
-    }
-    o << '\t' << cond;
-    for (int i = 0; i < 6; i++)
-    {
-        o << '\t' << evM[i];
-    }
-    o << '\t' << condM << '\t' << traceRatio << '\t' << deltaNorm << '\n';
-}
-
-/** Optional diagnostic: append the Birge-ratio rescaling of the cov2cov data
- *  block to a TSV file, one row per inner Gauss-Newton iteration.
- *
- *  Enabled only if the environment variable MP2P_ICP_BIRGE_FILE is set to a
- *  writable path, so it costs one cached lookup when unused. The ratio divides
- *  the whole cov2cov block of H and g, so how much of the LiDAR information
- *  actually survives into the normal equations is not observable from the
- *  trajectory, nor from the H spectrum alone.
- *
- *  Not thread-safe by design: it is for single-threaded diagnostic runs.
- */
-std::ostream* birgeStream()
-{
-    static std::unique_ptr<std::ofstream> s_file = []() -> std::unique_ptr<std::ofstream>
-    {
-        const char* path = ::getenv("MP2P_ICP_BIRGE_FILE");
-        if (!path || !path[0])
-        {
-            return {};
-        }
-        auto f = std::make_unique<std::ofstream>(path, std::ios::out | std::ios::app);
-        if (!f->is_open())
-        {
-            return {};
-        }
-        *f << "# call\titer\tnCov2Cov\tchi2_cc\tdof\tkappa\tcc_scale\tactive\n";
-        if (!f->good())
-        {
-            return {};
-        }
-        return f;
-    }();
-    // A write that failed silently would leave a truncated log looking like a
-    // complete one, so stop handing out a stream that has already gone bad.
-    if (s_file && !s_file->good())
-    {
-        s_file.reset();
-    }
-    return s_file ? s_file.get() : nullptr;
-}
-
 /** Skew-symmetric matrix of a 3-vector, i.e. [v]_x such that [v]_x·w = v × w */
 Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d& v)
 {
@@ -240,16 +74,7 @@ bool mp2p_icp::optimal_tf_gauss_newton(
 {
     using std::size_t;
 
-    // Reset here, not only where it is written: `result` carries the running pose
-    // between calls, so a reused instance would otherwise report the share of an
-    // earlier solve that did have a gravity prior.
-    result.gravity_information_share = -1.0;
-
     MRPT_START
-
-    // Only read by the optional H-spectrum diagnostic, so that its rows can be
-    // grouped per solver call (i.e. per ICP iteration).
-    const uint64_t hSpectrumCall = hSpectrumCallCounter++;
 
     // Run Gauss-Newton steps, using SE(3) relinearization at the current solution:
     ASSERTMSG_(
@@ -258,7 +83,7 @@ bool mp2p_icp::optimal_tf_gauss_newton(
     result.optimalPose = gnParams.linearizationPoint.value();
 
     const robust_sqrt_weight_func_t robustSqrtWeightFunc =
-        mp2p_icp::create_robust_kernel(gnParams.kernel, gnParams.kernelScale);
+        mp2p_icp::create_robust_kernel(gnParams.kernel, gnParams.kernelParam);
 
     // Approach B: prior-referenced robust kernel.
     // When enabled, the residual that feeds the robust kernel is blended between
@@ -274,15 +99,6 @@ bool mp2p_icp::optimal_tf_gauss_newton(
 
     // Returns the robust square-root weight multiplier for a factor, given its
     // residual squared-norm at the current iterate and at the prior mean pose.
-    //
-    // Both arguments must be WHITENED, i.e. already divided by the factor's
-    // variance, so that `kernelScale` is compared against one common scale for
-    // every residual type. Cov-to-cov pairings pass a Mahalanobis norm and are
-    // whitened by construction; the geometric ones are metric, so they scale
-    // their norm by their PairWeights entry, which is an inverse variance.
-    // Without that, one kernel threshold would be read in sigmas for one block
-    // and in metres for another, and the kernel would be inert on any block
-    // whose residuals are small in absolute units.
     const auto robustWeight = [&](double curSqrNorm, double priorSqrNorm) -> double
     {
         if (!robustSqrtWeightFunc)
@@ -365,9 +181,12 @@ bool mp2p_icp::optimal_tf_gauss_newton(
             double                      errNormSqr = 0;
         };
 
-        const auto [H_tbb_pt2pt, g_tbb_pt2pt, errNormSqr_tbb_pt2pt] = deterministic_reduce<Result>(
-            nPt2Pt,
-            // Accumulate one chunk of pairings:
+        const auto [H_tbb_pt2pt, g_tbb_pt2pt, errNormSqr_tbb_pt2pt] = tbb::parallel_reduce(
+            // Range
+            tbb::blocked_range<size_t>{0, nPt2Pt},
+            // Identity
+            Result(),
+            // 1st lambda: Parallel computation
             [&](const tbb::blocked_range<size_t>& r, Result res) -> Result
             {
                 auto& [H_local, g_local, errNormSqr_local] = res;
@@ -388,7 +207,7 @@ bool mp2p_icp::optimal_tf_gauss_newton(
                                            .asEigen()
                                            .squaredNorm();
                     }
-                    weight *= robustWeight(weight * retSqrNorm, weight * priorSqrNorm);
+                    weight *= robustWeight(retSqrNorm, priorSqrNorm);
 
                     // Error and Jacobian:
                     const Eigen::Vector3d err_i = ret.asEigen();
@@ -399,7 +218,9 @@ bool mp2p_icp::optimal_tf_gauss_newton(
                     H_local.noalias() += weight * Ji.transpose() * Ji;
                 }
                 return res;
-            });
+            },
+            // 2nd lambda: Parallel reduction
+            [](const Result& a, const Result& b) -> Result { return a + b; });
 
         H          = std::move(H_tbb_pt2pt);
         g          = std::move(g_tbb_pt2pt);
@@ -423,7 +244,7 @@ bool mp2p_icp::optimal_tf_gauss_newton(
                                    .asEigen()
                                    .squaredNorm();
             }
-            weight *= robustWeight(weight * retSqrNorm, weight * priorSqrNorm);
+            weight *= robustWeight(retSqrNorm, priorSqrNorm);
 
             // Error and Jacobian:
             const Eigen::Vector3d err_i = ret.asEigen();
@@ -444,49 +265,53 @@ bool mp2p_icp::optimal_tf_gauss_newton(
         Eigen::Matrix<double, 6, 1> g_cc    = Eigen::Matrix<double, 6, 1>::Zero();
         double                      chi2_cc = 0;  // sum of Mahalanobis squared norms
 #if defined(MP2P_HAS_TBB)
-        const auto [H_tbb_cov2cov, g_tbb_cov2cov, errNormSqr_tbb_cov2cov] =
-            deterministic_reduce<Result>(
-                nCov2Cov,
-                // Accumulate one chunk of pairings:
-                [&](const tbb::blocked_range<size_t>& r, Result res) -> Result
+        const auto [H_tbb_cov2cov, g_tbb_cov2cov, errNormSqr_tbb_cov2cov] = tbb::parallel_reduce(
+            // Range
+            tbb::blocked_range<size_t>{0, nCov2Cov},
+            // Identity
+            Result(),
+            // 1st lambda: Parallel computation
+            [&](const tbb::blocked_range<size_t>& r, Result res) -> Result
+            {
+                auto& [H_local, g_local, errNormSqr_local] = res;
+                for (size_t idx_pairing = r.begin(); idx_pairing < r.end(); idx_pairing++)
                 {
-                    auto& [H_local, g_local, errNormSqr_local] = res;
-                    for (size_t idx_pairing = r.begin(); idx_pairing < r.end(); idx_pairing++)
+                    // Error:
+                    const auto&                             p = in.paired_cov2cov[idx_pairing];
+                    mrpt::math::CMatrixFixed<double, 3, 12> J1;
+
+                    mrpt::math::CVectorFixedDouble<3> ret =
+                        mp2p_icp::error_point2point(p.local, p.global, result.optimalPose, J1);
+
+                    const Eigen::Matrix3d cov_inv = p.cov_inv.asEigen().cast<double>();
+
+                    // Apply robust kernel? (optionally prior-referenced)
+                    double weight     = 1.0;
+                    double retSqrNorm = ret.transpose() * cov_inv * ret.asEigen();
+
+                    double priorSqrNorm = retSqrNorm;
+                    if (usePriorKernelRef)
                     {
-                        // Error:
-                        const auto&                             p = in.paired_cov2cov[idx_pairing];
-                        mrpt::math::CMatrixFixed<double, 3, 12> J1;
-
-                        mrpt::math::CVectorFixedDouble<3> ret =
-                            mp2p_icp::error_point2point(p.local, p.global, result.optimalPose, J1);
-
-                        const Eigen::Matrix3d cov_inv = p.cov_inv.asEigen().cast<double>();
-
-                        // Apply robust kernel? (optionally prior-referenced)
-                        double weight     = 1.0;
-                        double retSqrNorm = ret.transpose() * cov_inv * ret.asEigen();
-
-                        double priorSqrNorm = retSqrNorm;
-                        if (usePriorKernelRef)
-                        {
-                            const auto pr =
-                                mp2p_icp::error_point2point(p.local, p.global, priorRefPose);
-                            priorSqrNorm = pr.transpose() * cov_inv * pr.asEigen();
-                        }
-                        weight *= robustWeight(retSqrNorm, priorSqrNorm);
-
-                        // Error and Jacobian:
-                        const Eigen::Vector3d err_i = ret.asEigen();
-                        errNormSqr_local += weight * retSqrNorm;
-
-                        const Eigen::Matrix<double, 3, 6> Ji = J1.asEigen() * dDexpe_de.asEigen();
-
-                        // Whitening: multiply times \Sigma^{-1/2}
-                        g_local.noalias() += weight * Ji.transpose() * cov_inv * err_i;
-                        H_local.noalias() += weight * Ji.transpose() * cov_inv * Ji;
+                        const auto pr =
+                            mp2p_icp::error_point2point(p.local, p.global, priorRefPose);
+                        priorSqrNorm = pr.transpose() * cov_inv * pr.asEigen();
                     }
-                    return res;
-                });
+                    weight *= robustWeight(retSqrNorm, priorSqrNorm);
+
+                    // Error and Jacobian:
+                    const Eigen::Vector3d err_i = ret.asEigen();
+                    errNormSqr_local += weight * retSqrNorm;
+
+                    const Eigen::Matrix<double, 3, 6> Ji = J1.asEigen() * dDexpe_de.asEigen();
+
+                    // Whitening: multiply times \Sigma^{-1/2}
+                    g_local.noalias() += weight * Ji.transpose() * cov_inv * err_i;
+                    H_local.noalias() += weight * Ji.transpose() * cov_inv * Ji;
+                }
+                return res;
+            },
+            // 2nd lambda: Parallel reduction
+            [](const Result& a, const Result& b) -> Result { return a + b; });
 
         H_cc    = H_tbb_cov2cov;
         g_cc    = g_tbb_cov2cov;
@@ -532,26 +357,17 @@ bool mp2p_icp::optimal_tf_gauss_newton(
         // pairings carry correlated information not captured by their per-pair
         // modeled covariances. See OptimalTF_GN_Parameters docs.
         {
-            double       cc_scale    = gnParams.cov2cov_alpha;
-            const double dof         = std::max(1.0, 3.0 * static_cast<double>(nCov2Cov) - 6.0);
-            double       kappa       = 1.0;
-            const bool   birgeActive = gnParams.cov2cov_auto_balance_with_prior &&
-                                     gnParams.prior.has_value() && nCov2Cov >= 3;
-            if (birgeActive)
+            double cc_scale = gnParams.cov2cov_alpha;
+            if (gnParams.cov2cov_auto_balance_with_prior && gnParams.prior.has_value() &&
+                nCov2Cov >= 3)
             {
-                kappa = std::max(1.0, chi2_cc / dof);
+                const double dof   = std::max(1.0, 3.0 * static_cast<double>(nCov2Cov) - 6.0);
+                const double kappa = std::max(1.0, chi2_cc / dof);
                 cc_scale /= kappa;
             }
             H.noalias() += cc_scale * H_cc;
             g.noalias() += cc_scale * g_cc;
             errNormSqr += cc_scale * chi2_cc;
-
-            if (auto* bs = birgeStream(); bs)
-            {
-                *bs << hSpectrumCall << '\t' << iter << '\t' << nCov2Cov << '\t' << chi2_cc << '\t'
-                    << dof << '\t' << kappa << '\t' << cc_scale << '\t' << (birgeActive ? 1 : 0)
-                    << '\n';
-            }
         }
         //
         // ============== Point-to-line ===============
@@ -571,7 +387,7 @@ bool mp2p_icp::optimal_tf_gauss_newton(
             {
                 priorSqrNorm = mp2p_icp::error_point2line(p, priorRefPose).asEigen().squaredNorm();
             }
-            weight *= robustWeight(weight * retSqrNorm, weight * priorSqrNorm);
+            weight *= robustWeight(retSqrNorm, priorSqrNorm);
 
             // Error and Jacobian:
             const Eigen::Vector3d err_i = ret.asEigen();
@@ -600,7 +416,7 @@ bool mp2p_icp::optimal_tf_gauss_newton(
             {
                 priorSqrNorm = mp2p_icp::error_line2line(p, priorRefPose).asEigen().squaredNorm();
             }
-            weight *= robustWeight(weight * retSqrNorm, weight * priorSqrNorm);
+            weight *= robustWeight(retSqrNorm, priorSqrNorm);
 
             // Error and Jacobian:
             const Eigen::Vector4d err_i = ret.asEigen();
@@ -615,9 +431,12 @@ bool mp2p_icp::optimal_tf_gauss_newton(
         // ============== Point-to-plane ===============
         //
 #if defined(MP2P_HAS_TBB)
-        const auto [H_tbb_pt2pl, g_tbb_pt2pl, errNormSqr_tbb_pl2pl] = deterministic_reduce<Result>(
-            nPt2Pl,
-            // Accumulate one chunk of pairings:
+        const auto [H_tbb_pt2pl, g_tbb_pt2pl, errNormSqr_tbb_pl2pl] = tbb::parallel_reduce(
+            // Range
+            tbb::blocked_range<size_t>{0, nPt2Pl},
+            // Identity
+            Result(),
+            // 1st lambda: Parallel computation
             [&](const tbb::blocked_range<size_t>& r, Result res) -> Result
             {
                 auto& [H_local, g_local, errNormSqr_local] = res;
@@ -637,7 +456,7 @@ bool mp2p_icp::optimal_tf_gauss_newton(
                         priorSqrNorm =
                             mp2p_icp::error_point2plane(p, priorRefPose).asEigen().squaredNorm();
                     }
-                    weight *= robustWeight(weight * retSqrNorm, weight * priorSqrNorm);
+                    weight *= robustWeight(retSqrNorm, priorSqrNorm);
 
                     // Error and Jacobian:
                     const Eigen::Vector3d err_i = ret.asEigen();
@@ -648,7 +467,9 @@ bool mp2p_icp::optimal_tf_gauss_newton(
                     H_local.noalias() += weight * Ji.transpose() * Ji;
                 }
                 return res;
-            });
+            },
+            // 2nd lambda: Parallel reduction
+            [](const Result& a, const Result& b) -> Result { return a + b; });
 
         H += H_tbb_pt2pl;
         g += g_tbb_pt2pl;
@@ -670,7 +491,7 @@ bool mp2p_icp::optimal_tf_gauss_newton(
             {
                 priorSqrNorm = mp2p_icp::error_point2plane(p, priorRefPose).asEigen().squaredNorm();
             }
-            weight *= robustWeight(weight * retSqrNorm, weight * priorSqrNorm);
+            weight *= robustWeight(retSqrNorm, priorSqrNorm);
 
             // Error and Jacobian:
             const Eigen::Vector3d err_i = ret.asEigen();
@@ -699,7 +520,7 @@ bool mp2p_icp::optimal_tf_gauss_newton(
             {
                 priorSqrNorm = mp2p_icp::error_plane2plane(p, priorRefPose).asEigen().squaredNorm();
             }
-            weight *= robustWeight(weight * retSqrNorm, weight * priorSqrNorm);
+            weight *= robustWeight(retSqrNorm, priorSqrNorm);
 
             const Eigen::Vector3d err_i = ret.asEigen();
             errNormSqr += weight * retSqrNorm;
@@ -708,10 +529,6 @@ bool mp2p_icp::optimal_tf_gauss_newton(
             g.noalias() += weight * Ji.transpose() * err_i;
             H.noalias() += weight * Ji.transpose() * Ji;
         }
-
-        // Kept for the optional H-spectrum diagnostic only: how much of the
-        // information is in the measurements, before the prior is added.
-        const Eigen::Matrix<double, 6, 6> H_meas = H;
 
         // Prior guess term:
         if (gnParams.prior.has_value())
@@ -776,18 +593,8 @@ bool mp2p_icp::optimal_tf_gauss_newton(
             const double w_g =
                 1.0 / (gnParams.gravityPrior->sigma_rad * gnParams.gravityPrior->sigma_rad);
 
-            const Eigen::Matrix<double, 6, 6> Hg = w_g * Jg.transpose() * Jg;
-
-            // How much of the rotational information this term actually
-            // supplies, against everything the pairs contribute to the same
-            // block. Sigma alone does not say: the pairs' contribution scales
-            // with their number and the square of their lever arms.
-            const double trRotPairs          = H.block<3, 3>(3, 3).trace();
-            const double trRotGrav           = Hg.block<3, 3>(3, 3).trace();
-            result.gravity_information_share = trRotGrav / std::max(1e-30, trRotPairs + trRotGrav);
-
             g.noalias() += w_g * Jg.transpose() * r_g;
-            H.noalias() += Hg;
+            H.noalias() += w_g * Jg.transpose() * Jg;
         }
 
         // ============ Termination criterion =============
@@ -795,14 +602,6 @@ bool mp2p_icp::optimal_tf_gauss_newton(
         const double errNorm = std::sqrt(errNormSqr);
         if (errNorm <= gnParams.maxCost)
         {
-            // Terminal row: this iteration assembled H but takes no step, so
-            // the increment is reported as NaN rather than omitting the row.
-            if (auto* hs = hSpectrumStream(); hs)
-            {
-                dumpHSpectrum(
-                    *hs, hSpectrumCall, iter, nPt2Pt + nCov2Cov + nPt2Ln + nPt2Pl + nPl2Pl + nLn2Ln,
-                    errNorm, H, H_meas, std::numeric_limits<double>::quiet_NaN());
-            }
             break;
         }
 
@@ -810,13 +609,6 @@ bool mp2p_icp::optimal_tf_gauss_newton(
         // g = J.transpose() * err;
         // H = J.transpose() * J;
         const Eigen::Matrix<double, 6, 1> delta = -H.ldlt().solve(g);
-
-        if (auto* hs = hSpectrumStream(); hs)
-        {
-            dumpHSpectrum(
-                *hs, hSpectrumCall, iter, nPt2Pt + nCov2Cov + nPt2Ln + nPt2Pl + nPl2Pl + nLn2Ln,
-                errNorm, H, H_meas, delta.norm());
-        }
 
         // 4) add SE(3) increment:
         const auto dE = mrpt::poses::Lie::SE<3>::exp(mrpt::math::CVectorFixed<double, 6>(delta));

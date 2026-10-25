@@ -121,7 +121,7 @@ void Matcher_Points_Base::initialize(const mrpt::containers::yaml& params)
 
     if (params.has("pointLayerMatches"))
     {
-        const auto& p = params["pointLayerMatches"];
+        auto& p = params["pointLayerMatches"];
 
         pt2pt_layer_matches.clear();
         ASSERT_(p.isSequence());
@@ -136,13 +136,13 @@ void Matcher_Points_Base::initialize(const mrpt::containers::yaml& params)
         for (const auto& entry : p.asSequence())
         {
             ASSERT_(entry.isMap());
-            const mrpt::containers::yaml em(entry);
+            const auto& em = entry.asMap();
 
-            ASSERT_(em.has("global"));
-            ASSERT_(em.has("local"));
+            ASSERT_(em.count("global"));
+            ASSERT_(em.count("local"));
 
-            const std::string globalLayer = em["global"].as<std::string>();
-            const std::string localLayer  = em["local"].as<std::string>();
+            const std::string globalLayer = em.at("global").as<std::string>();
+            const std::string localLayer  = em.at("local").as<std::string>();
 
             pt2pt_layer_matches[globalLayer].insert(localLayer);
         }

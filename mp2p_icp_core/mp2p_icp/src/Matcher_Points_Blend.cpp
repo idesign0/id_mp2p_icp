@@ -323,16 +323,9 @@ void Matcher_Points_Blend::implMatchOneLayer(
     // rewritten as a serial loop.
     using Result = mrpt::tfest::TMatchingPairList;
 
-    // parallel_DETERMINISTIC_reduce with an explicit grainsize, for the same
-    // reason as Matcher_Points_DistanceThreshold: this join is a concatenation,
-    // so the pairing ORDER is the shape of the reduction tree, and the plain
-    // form shapes that from whichever workers were free. See the long comment
-    // there.
-    constexpr size_t kDeterministicGrainSize = 512;
-
-    auto newPairs = tbb::parallel_deterministic_reduce(
+    auto newPairs = tbb::parallel_reduce(
         // Range
-        tbb::blocked_range<size_t>{0, nLocalPts, kDeterministicGrainSize},
+        tbb::blocked_range<size_t>{0, nLocalPts},
         // Identity
         Result(),
         // 1st lambda: Parallel computation

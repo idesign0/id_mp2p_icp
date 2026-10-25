@@ -6,7 +6,7 @@ Testing
 build
 log
 install
-build-*/
+build-*
 CTestTestfile.cmake
 install_manifest.txt
 
@@ -17,6 +17,3 @@ install_manifest.txt
 !.vscode/settings.json
 **/.vscode
 .cache
-
-# Dear ImGui per-app docking layout, written next to the CWD the GUI apps are launched from
-*.imgui.ini

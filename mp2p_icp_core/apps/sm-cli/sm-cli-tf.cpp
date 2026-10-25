@@ -60,8 +60,7 @@ int commandTf()
 
     // save:
     std::cout << "Saving result to: '" << outFile << "... " << std::endl;
-    const bool saveOk = sm.saveToFile(outFile);
-    ASSERTMSG_(saveOk, "Error writing output file");
+    sm.saveToFile(outFile);
 
     return 0;
 }
